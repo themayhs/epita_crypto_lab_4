@@ -55,7 +55,7 @@ check "root: P-384 key"                            has "$ROOT" "NIST CURVE: P-38
 echo "-- issuing CA"
 check "intermediate signed by the root"            openssl verify -CAfile "$ROOT" "$INT"
 check "intermediate: CA:TRUE, pathlen:0"           has "$INT" "CA:TRUE, pathlen:0"
-check "intermediate: nameConstraints lab.internal" has "$INT" "DNS:lab.internal"
+check "intermediate: nameConstraints lab.internal" has "$INT" 'DNS:\.\{0,1\}lab\.internal$'   # .lab.internal also works in OpenSSL
 
 echo "-- server certificate"
 S=$(cert www)
