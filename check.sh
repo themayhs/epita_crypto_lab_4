@@ -92,18 +92,22 @@ if [ "$STATE" != working ]; then
   check "intermediate CRL present"                 test -f "$INTCRL"
   check "root CRL present"                         test -f "$ROOTCRL"
   check "CRLs valid, bob not revoked"              openssl verify -crl_check_all -CAfile "$ROOT" -untrusted "$INT" -CRLfile "$INTCRL" -CRLfile "$ROOTCRL" "$(cert bob)"
-  old=$(awk -F'\t' '$1 == "R" && $6 ~ /CN=alice/ {print $4}' "$L/intermediate/index.txt" 2>/dev/null | head -1)
-  if [ -n "$old" ]; then ok "index.txt: an alice certificate is revoked (serial $old)"; else ko "index.txt: no revoked alice certificate"; fi
-  if [ -n "$old" ] && openssl crl -in "$INTCRL" -noout -text 2>/dev/null | grep -q "Serial Number: $old"; then
-    ok "serial $old is in the published CRL"
-  else
-    ko "the revoked alice serial is not in the published CRL"
+  # every alice certificate marked R in index.txt: one or more (a student may revoke twice)
+  revoked=$(awk -F'\t' '$1 == "R" && $6 ~ /CN=alice/ {print $4}' "$L/intermediate/index.txt" 2>/dev/null)
+  n=$(echo "$revoked" | grep -c .)
+  if [ "$n" -gt 0 ]; then ok "index.txt: $n alice certificate(s) revoked ($(echo $revoked))"; else ko "index.txt: no revoked alice certificate"; fi
+  crltext=$(openssl crl -in "$INTCRL" -noout -text 2>/dev/null)
+  missing=""
+  for r in $revoked; do echo "$crltext" | grep -q "Serial Number: $r\$" || missing="$missing $r"; done
+  if [ "$n" -gt 0 ]; then
+    if [ -z "$missing" ]; then ok "every revoked alice serial is in the published CRL"
+    else ko "revoked in index.txt but not in the published CRL:$missing (publish the CRL again)"; fi
   fi
   cur=$(openssl x509 -in "$(cert alice)" -noout -serial 2>/dev/null | cut -d= -f2)
   if [ "$STATE" = broken ]; then
-    if [ "$cur" = "$old" ]; then ok "alice's current certificate is the revoked one"; else ko "alice's current certificate ($cur) is not the revoked one"; fi
+    if [ -n "$cur" ] && echo "$revoked" | grep -qx "$cur"; then ok "alice's current certificate ($cur) is revoked"; else ko "alice's current certificate ($cur) is not revoked"; fi
   else
-    if [ -n "$cur" ] && [ "$cur" != "$old" ]; then ok "alice has a new certificate (serial $cur)"; else ko "alice still uses the revoked certificate"; fi
+    if [ -n "$cur" ] && ! echo "$revoked" | grep -qx "$cur"; then ok "alice has a certificate that is not revoked (serial $cur)"; else ko "alice still uses a revoked certificate ($cur)"; fi
     check "alice's new certificate passes the CRL check" openssl verify -crl_check_all -CAfile "$ROOT" -untrusted "$INT" -CRLfile "$INTCRL" -CRLfile "$ROOTCRL" "$(cert alice)"
   fi
 fi
