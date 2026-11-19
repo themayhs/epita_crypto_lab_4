@@ -12,8 +12,15 @@ validity, what it is used for.
 | root CA, EC P-384, self-signed, `root/certs/ca.cert.pem` | `root/private/ca.key.pem`, encrypted (AES-256, passphrase) | the `root-ca` container (no network); on the host, my user account, but only I know the passphrase | 2046-11-11, 20 years (`openssl x509 -noout -enddate`) | signs the intermediate and the root CRL, nothing else; stopped the rest of the time |
 
 **Lifetimes.** The root lasts 20 years, the intermediate 10, the server and client certificates 90 days.
-Justify each number: what would a shorter or a longer lifetime cost you? Why 90 days for the server, and not
-1 year, or 7 days?
+Justify each number: 
+**What would a shorter or a longer lifetime cost you ?**
+> Le root (20 ans) : hors ligne, il ne signe qu'une fois et toute rotation oblige à redéployer une ancre de confiance partout — sa durée longue ne coûte rien car son exposition est nulle.
+L'intermédiaire (10 ans, la moitié du root) : il ne dépasse jamais son émetteur, et se renouvelle sans toucher aux trust stores, contrairement au root.
+Les feuilles (90 jours) : la révocation n'est pas fiable ici (nginx lit les CRL au démarrage, CRL valide 7 jours, curl ne vérifie pas le serveur), donc notAfter est la seule borne réelle sur une clé volée.
+Pas 1 an : la clé d'alice volée en phase 5 resterait utilisable quatre fois plus longtemps (le maximum public est passé de 398 à 200 jours en mars 2026, 100 en 2027, 47 en 2029).
+Pas 7 jours : 52 renouvellements manuels par an et par identité (genpkey, req, openssl ca, copie, restart nginx, CRL), sans ACME ici c'est une panne garantie la première semaine d'absence.
+**Why 90 days for the server, and not 1 year, or 7 days?**
+90 jours correspond à un trimestre. C'est tenable à la main, l'exposition est bornée et complémentaire de la CRL de 7 jours. La révocation se fait via un chemin rapide et l'expiration est un filet de sécurité.
 
 ## 2. Chain
 
@@ -68,7 +75,14 @@ what stops working or becomes unsafe, how do you recover, how long does it take?
 
 search answer to those questions/weaknesses
 
-- the root key's passphrase: where is it, who knows it? What if that person leaves the company?
+- the root key's passphrase: 
+**Where is it ?**
+> La phrase secrète se trouve dans un gestionnaire de mots de passe. La clé chiffrée root/private/ca.key.pem est sur l'hôte via le bind mount ./root:/pki/root ; la phrase, elle, doit être ailleurs (sinon les deux moitiés sont au même endroit et le chiffrement ne sont plus efficaces).
+**Who knows it ?**
+> Idéalement plus d'une personne. Sinon il faut au minimum une trace écrite : un second détenteur désigné ou la phrase découpée en plusieurs morceaux stockés chez plusieurs personnes.
+**What if that person leaves the company?**
+> Sans trace, le root CA est perdue et il est impossible de signer un nouvel intermédiaire ni de publier une CRL root, donc à terme toute la PKI meurt à l'expiration. La sortie de secours coûte une nouvelle racine à redéployer dans tous les trust stores.
+
 - the CRL expires after 7 days: what happens on day 8, and who regenerates it?
 - the lab root is in no trust store: how would every laptop, server and container get it?
 - the intermediate's key is not encrypted, unlike the root's. Search how it would be possible to use KMS for intermediate issuing CA.
